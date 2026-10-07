@@ -1,9 +1,11 @@
 -- ==========================================================
--- 🤖 IA CHAT BOT - GUI NATIVA (versão 4.0)
+-- 🤖 IA CHAT BOT - GUI NATIVA (versão 5.0)
 -- ✅ Anti-filtro de mensagens
 -- ✅ Sem botões duplicados
 -- ✅ 6 opções (A até F)
--- ✅ Sistema de vez única: 1 pergunta por vez (timeout 10s)
+-- ✅ Sistema de vez única
+-- ✅ Padrão: 20s para responder | 3s entre mensagens
+-- ✅ Ambos configuráveis na GUI
 -- ==========================================================
 
 local Players = game:GetService("Players")
@@ -31,15 +33,18 @@ end)
 local iaActive = false
 local awaitingPlayers = {}
 local timeSinceLastMessage = tick()
-local minMessageCooldown = 2.3
+
+-- ⚙️ CONFIGURAÇÕES (editáveis na GUI)
+local minMessageCooldown = 3.0   -- 💬 Segundos entre CADA mensagem da IA
+local askTimeout = 20            -- ⏰ Segundos que o jogador tem pra escolher A-F
+local cooldownTime = 3           -- 🔁 Cooldown entre letras (evita spam)
+
 local userCooldowns = {}
-local cooldownTime = 3
 local chatConnection = nil
 
 -- ===== SISTEMA DE VEZ ÚNICA =====
-local currentAsker = nil       -- { name = "Fulano", display = "Fulano123" }
-local currentAskerToken = 0    -- evita race conditions
-local askTimeout = 10          -- segundos para escolher
+local currentAsker = nil
+local currentAskerToken = 0
 
 local pendingMessages = {}
 local MAX_RESEND = 3
@@ -387,7 +392,6 @@ local function ProcessMessage(player, message)
 
     local isMyTurn = currentAsker and currentAsker.name == player.Name
 
-    -- === CASO 1: é o perguntador atual e está escolhendo uma opção ===
     if isMyTurn and awaitingPlayers[player.Name] then
         local optIndex = optionLetterToIndex(firstChar)
         if optIndex then
@@ -410,13 +414,11 @@ local function ProcessMessage(player, message)
         end
     end
 
-    -- === CASO 2: já tem alguém perguntando (não é ele) → bloqueia ===
     if currentAsker and currentAsker.name ~= player.Name then
         SendMessage("⏳ | Aguarde! "..currentAsker.display.." está escolhendo. Uma pergunta por vez.")
         return
     end
 
-    -- === CASO 3: inicia nova pergunta ===
     if table.find(alphabet, firstChar) then
         if IsOnCooldown(player) then return end
         AddCooldown(player)
@@ -459,19 +461,21 @@ end
 StartListening()
 
 -- ===== MENSAGENS DE AJUDA =====
-local instructionMessages = {
-    "📖 | COMO USAR A IA:",
-    "1️⃣ | Digite uma letra de A a Z no chat.",
-    "2️⃣ | A IA mostra 6 opções (A até F) do tema escolhido.",
-    "3️⃣ | Você tem "..askTimeout.." segundos para escolher uma letra de A até F.",
-    "4️⃣ | Enquanto você escolhe, outros jogadores ficam bloqueados (só 1 por vez!).",
-    "5️⃣ | Depois de responder, a vez fica livre para o próximo.",
-    "💡 | Dica: clique em 'Mostrar letras' na GUI pra ver todos os temas.",
-}
+local function buildInstructionMessages()
+    return {
+        "📖 | COMO USAR A IA:",
+        "1️⃣ | Digite uma letra de A a Z no chat.",
+        "2️⃣ | A IA mostra 6 opções (A até F) do tema escolhido.",
+        "3️⃣ | Você tem "..askTimeout.." segundos para escolher uma letra de A até F.",
+        "4️⃣ | Enquanto você escolhe, outros jogadores ficam bloqueados (só 1 por vez!).",
+        "5️⃣ | Depois de responder, a vez fica livre para o próximo.",
+        "💡 | Dica: clique em 'Mostrar letras' na GUI pra ver todos os temas.",
+    }
+end
 
 local function SendInstructions()
     if not iaActive then notify("IA desativada", "Ative a IA primeiro") return end
-    for _, msg in ipairs(instructionMessages) do
+    for _, msg in ipairs(buildInstructionMessages()) do
         SendMessage(msg)
         task.wait(1.2)
     end
@@ -675,6 +679,26 @@ local function makeButton(parent, text, yPos, color, callback)
     return btn
 end
 
+local function makeInput(parent, yPos, initialText, placeholder)
+    local input = Instance.new("TextBox")
+    input.Size = UDim2.new(1, 0, 0, 38)
+    input.Position = UDim2.new(0, 0, 0, yPos)
+    input.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    input.Text = tostring(initialText)
+    input.PlaceholderText = placeholder
+    input.TextColor3 = Color3.fromRGB(230, 230, 230)
+    input.PlaceholderColor3 = Color3.fromRGB(140, 140, 140)
+    input.TextSize = 14
+    input.Font = Enum.Font.Gotham
+    input.BorderSizePixel = 0
+    input.ClearTextOnFocus = false
+    input.Parent = parent
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 8)
+    c.Parent = input
+    return input
+end
+
 -- Botão toggle
 local toggleBtn = Instance.new("TextButton")
 toggleBtn.Size = UDim2.new(1, 0, 0, 50)
@@ -709,7 +733,6 @@ toggleBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- Status da vez atual
 makeLabel(tabMain, "📊 STATUS DA VEZ", 105, 22, Color3.fromRGB(100, 180, 255))
 local statusLabel = makeLabel(tabMain, "🟢 Ninguém perguntando agora", 130, 25, Color3.fromRGB(150, 220, 150))
 
@@ -732,7 +755,7 @@ makeButton(tabMain, "📖 Mostrar instruções no chat", 200, Color3.fromRGB(70,
 makeButton(tabMain, "📚 Mostrar o que cada letra diz", 250, Color3.fromRGB(120, 90, 180), SendThemeList)
 
 makeLabel(tabMain, "ℹ️ SOBRE", 310, 22, Color3.fromRGB(100, 180, 255))
-makeLabel(tabMain, "Digite uma letra (A-Z) no chat. A IA mostra 6 opções (A até F). Você tem "..askTimeout.." segundos para escolher! Enquanto isso, outros jogadores ficam bloqueados.", 340, 90, Color3.fromRGB(180, 180, 180))
+makeLabel(tabMain, "Digite uma letra (A-Z) no chat. A IA mostra 6 opções (A até F). Você tem 20 segundos para escolher! Enquanto isso, outros jogadores ficam bloqueados.", 340, 90, Color3.fromRGB(180, 180, 180))
 
 -- ===== ABA LETRAS =====
 local tabLetters = Instance.new("ScrollingFrame")
@@ -769,7 +792,7 @@ local tabConfig = Instance.new("ScrollingFrame")
 tabConfig.Size = UDim2.new(1, 0, 1, 0)
 tabConfig.BackgroundTransparency = 1
 tabConfig.BorderSizePixel = 0
-tabConfig.CanvasSize = UDim2.new(0, 0, 0, 600)
+tabConfig.CanvasSize = UDim2.new(0, 0, 0, 750)
 tabConfig.ScrollBarThickness = 4
 tabConfig.ScrollBarImageColor3 = Color3.fromRGB(60, 130, 220)
 tabConfig.Visible = false
@@ -777,24 +800,9 @@ tabConfig.Parent = contentFrame
 
 makeLabel(tabConfig, "⚙️ CONFIGURAÇÕES", 10, 22, Color3.fromRGB(100, 180, 255))
 
+-- ⏱️ Cooldown entre letras
 local cdLabel = makeLabel(tabConfig, "⏱️ Cooldown entre letras: "..cooldownTime.."s", 45, 25)
-local cdInput = Instance.new("TextBox")
-cdInput.Size = UDim2.new(1, 0, 0, 38)
-cdInput.Position = UDim2.new(0, 0, 0, 75)
-cdInput.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
-cdInput.Text = tostring(cooldownTime)
-cdInput.PlaceholderText = "Digite o cooldown em segundos"
-cdInput.TextColor3 = Color3.fromRGB(230, 230, 230)
-cdInput.PlaceholderColor3 = Color3.fromRGB(140, 140, 140)
-cdInput.TextSize = 14
-cdInput.Font = Enum.Font.Gotham
-cdInput.BorderSizePixel = 0
-cdInput.ClearTextOnFocus = false
-cdInput.Parent = tabConfig
-local cc = Instance.new("UICorner")
-cc.CornerRadius = UDim.new(0, 8)
-cc.Parent = cdInput
-
+local cdInput = makeInput(tabConfig, 75, cooldownTime, "Digite o cooldown em segundos")
 cdInput.FocusLost:Connect(function()
     local num = tonumber(cdInput.Text)
     if num and num >= 0 then
@@ -806,48 +814,46 @@ cdInput.FocusLost:Connect(function()
     end
 end)
 
--- Timeout input
-local timeoutLabel = makeLabel(tabConfig, "⌛ Tempo para escolher (A-F): "..askTimeout.."s", 130, 25)
-local timeoutInput = Instance.new("TextBox")
-timeoutInput.Size = UDim2.new(1, 0, 0, 38)
-timeoutInput.Position = UDim2.new(0, 0, 0, 160)
-timeoutInput.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
-timeoutInput.Text = tostring(askTimeout)
-timeoutInput.PlaceholderText = "Digite o tempo em segundos"
-timeoutInput.TextColor3 = Color3.fromRGB(230, 230, 230)
-timeoutInput.PlaceholderColor3 = Color3.fromRGB(140, 140, 140)
-timeoutInput.TextSize = 14
-timeoutInput.Font = Enum.Font.Gotham
-timeoutInput.BorderSizePixel = 0
-timeoutInput.ClearTextOnFocus = false
-timeoutInput.Parent = tabConfig
-local tic = Instance.new("UICorner")
-tic.CornerRadius = UDim.new(0, 8)
-tic.Parent = timeoutInput
-
+-- ⏰ Tempo para escolher A-F
+local timeoutLabel = makeLabel(tabConfig, "⏰ Tempo para escolher (A-F): "..askTimeout.."s", 130, 25)
+local timeoutInput = makeInput(tabConfig, 160, askTimeout, "Digite o tempo em segundos")
 timeoutInput.FocusLost:Connect(function()
     local num = tonumber(timeoutInput.Text)
     if num and num >= 3 then
         askTimeout = num
-        timeoutLabel.Text = "⌛ Tempo para escolher (A-F): "..askTimeout.."s"
+        timeoutLabel.Text = "⏰ Tempo para escolher (A-F): "..askTimeout.."s"
         notify("Tempo atualizado", "Novo: "..askTimeout.."s")
     else
         timeoutInput.Text = tostring(askTimeout)
     end
 end)
 
-makeButton(tabConfig, "🔄 Resetar cooldowns", 220, Color3.fromRGB(180, 120, 60), function()
+-- 💬 Intervalo entre mensagens da IA
+local speedLabel = makeLabel(tabConfig, "💬 Intervalo entre mensagens: "..minMessageCooldown.."s", 215, 25)
+local speedInput = makeInput(tabConfig, 245, minMessageCooldown, "Digite o intervalo em segundos")
+speedInput.FocusLost:Connect(function()
+    local num = tonumber(speedInput.Text)
+    if num and num >= 1 then
+        minMessageCooldown = num
+        speedLabel.Text = "💬 Intervalo entre mensagens: "..minMessageCooldown.."s"
+        notify("Velocidade atualizada", "Novo intervalo: "..minMessageCooldown.."s")
+    else
+        speedInput.Text = tostring(minMessageCooldown)
+    end
+end)
+
+makeButton(tabConfig, "🔄 Resetar cooldowns", 305, Color3.fromRGB(180, 120, 60), function()
     userCooldowns = {}
     notify("Cooldowns resetados ✅", "Todos podem usar a IA novamente")
 end)
 
-makeButton(tabConfig, "🧹 Limpar fila de espera", 270, Color3.fromRGB(180, 120, 60), function()
+makeButton(tabConfig, "🧹 Limpar fila de espera", 355, Color3.fromRGB(180, 120, 60), function()
     awaitingPlayers = {}
     clearAskerSession()
     notify("Fila limpa ✅", "Todos podem recomeçar")
 end)
 
-makeButton(tabConfig, "🔓 Liberar vez atual", 320, Color3.fromRGB(200, 140, 60), function()
+makeButton(tabConfig, "🔓 Liberar vez atual", 405, Color3.fromRGB(200, 140, 60), function()
     if currentAsker then
         notify("Vez liberada", currentAsker.display.." foi liberado manualmente")
         clearAskerSession()
@@ -857,9 +863,9 @@ makeButton(tabConfig, "🔓 Liberar vez atual", 320, Color3.fromRGB(200, 140, 60
     end
 end)
 
-makeLabel(tabConfig, "⚠️ ZONA DE PERIGO", 390, 22, Color3.fromRGB(255, 100, 100))
+makeLabel(tabConfig, "⚠️ ZONA DE PERIGO", 475, 22, Color3.fromRGB(255, 100, 100))
 
-makeButton(tabConfig, "❌ Destruir GUI e desativar", 420, Color3.fromRGB(200, 60, 60), function()
+makeButton(tabConfig, "❌ Destruir GUI e desativar", 505, Color3.fromRGB(200, 60, 60), function()
     iaActive = false
     awaitingPlayers = {}
     clearAskerSession()
@@ -896,5 +902,5 @@ end)
 -- ===== MENSAGEM INICIAL =====
 notify("🤖 IA Chat Bot", "Script carregado! Clique no botão 🤖 para abrir a GUI.", 6)
 
-print("[IA Chat Bot] Script carregado com sucesso! v4.0")
-print("[IA Chat Bot] Anti-filtro | 6 opções (A-F) | Vez única com timeout de "..askTimeout.."s")
+print("[IA Chat Bot] Script carregado com sucesso! v5.0")
+print("[IA Chat Bot] ⏰ Tempo para responder: "..askTimeout.."s | 💬 Intervalo entre mensagens: "..minMessageCooldown.."s")
